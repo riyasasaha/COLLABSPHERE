@@ -1,0 +1,309 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum WorkspaceRole {
+  SUPER_ADMIN
+  WORKSPACE_ADMIN
+  MEMBER
+  GUEST
+}
+
+enum TaskStatus {
+  TODO
+  IN_PROGRESS
+  DONE
+}
+
+enum TaskPriority {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+model User {
+  id                String            @id @default(cuid())
+  email             String            @unique
+  name              String
+  passwordHash      String?
+  googleId          String?           @unique
+  avatarUrl         String?
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+  memberships       WorkspaceMember[]
+  ownedWorkspaces   Workspace[]       @relation("WorkspaceOwner")
+  createdBoards     Board[]           @relation("BoardCreator")
+  assignedTasks     Task[]            @relation("TaskAssignee")
+  createdTasks      Task[]            @relation("TaskCreator")
+  authoredDocuments Document[]        @relation("DocumentAuthor")
+  documentVersions  DocumentVersion[] @relation("VersionAuthor")
+  sentMessages      Message[]         @relation("MessageSender")
+  auditLogs         AuditLog[]        @relation("AuditActor")
+  comments          Comment[]         @relation("CommentAuthor")
+  ownedFiles        FileAsset[]       @relation("FileAssetOwner")
+  uploadedFiles     File[]            @relation("FileOwner")
+  uploadedFileVersions FileVersion[] @relation("FileVersionUploader")
+  notifications    Notification[]    @relation("NotificationRecipient")
+  sentNotifications Notification[]   @relation("NotificationActor")
+}
+
+model Workspace {
+  id        String            @id @default(cuid())
+  name      String
+  slug      String            @unique
+  ownerId   String
+  createdAt DateTime          @default(now())
+  updatedAt DateTime          @updatedAt
+  owner     User              @relation("WorkspaceOwner", fields: [ownerId], references: [id])
+  members   WorkspaceMember[]
+  boards    Board[]
+  tasks     Task[]
+  documents Document[]
+  versions  DocumentVersion[]
+  messages  Message[]
+  auditLogs AuditLog[]
+  columns   Column[]
+  comments  Comment[]
+  files     FileAsset[]
+  workspaceFiles File[] @relation("WorkspaceFiles")
+  workspaceFileVersions FileVersion[] @relation("WorkspaceFileVersions")
+  notifications Notification[] @relation("WorkspaceNotifications")
+
+  @@index([ownerId])
+}
+
+model WorkspaceMember {
+  id          String        @id @default(cuid())
+  workspaceId String
+  userId      String
+  role        WorkspaceRole @default(MEMBER)
+  joinedAt    DateTime      @default(now())
+  workspace   Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user        User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, userId])
+  @@index([workspaceId])
+  @@index([userId])
+}
+
+model Board {
+  id          String    @id @default(cuid())
+  workspaceId String
+  creatorId   String
+  name        String
+  description String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  creator     User      @relation("BoardCreator", fields: [creatorId], references: [id])
+  columns     Column[]
+  tasks       Task[]
+
+  @@index([workspaceId])
+  @@index([workspaceId, createdAt])
+}
+
+model Column {
+  id          String    @id @default(cuid())
+  workspaceId String
+  boardId     String
+  name        String
+  position    Int       @default(0)
+  createdAt   DateTime  @default(now())
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  board       Board     @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  tasks       Task[]
+
+  @@index([workspaceId])
+  @@index([boardId, position])
+}
+
+model Task {
+  id          String     @id @default(cuid())
+  workspaceId String
+  boardId     String
+  columnId    String
+  creatorId   String
+  assigneeId  String?
+  title       String
+  description String?
+  status      TaskStatus    @default(TODO)
+  priority    TaskPriority  @default(MEDIUM)
+  position    Int           @default(0)
+  dueAt       DateTime?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime   @updatedAt
+  workspace   Workspace  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  board       Board      @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  column      Column     @relation(fields: [columnId], references: [id], onDelete: Cascade)
+  creator     User       @relation("TaskCreator", fields: [creatorId], references: [id])
+  assignee    User?      @relation("TaskAssignee", fields: [assigneeId], references: [id])
+
+  @@index([workspaceId])
+  @@index([workspaceId, boardId])
+  @@index([columnId, position])
+}
+
+model Document {
+  id          String            @id @default(cuid())
+  workspaceId String
+  authorId    String
+  title       String
+  content     String            @default("")
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+  workspace   Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  author      User              @relation("DocumentAuthor", fields: [authorId], references: [id])
+  versions    DocumentVersion[]
+  comments    Comment[]
+
+  @@index([workspaceId])
+  @@index([workspaceId, updatedAt])
+}
+
+model DocumentVersion {
+  id          String    @id @default(cuid())
+  workspaceId String
+  documentId  String
+  authorId    String
+  version     Int
+  content     String
+  createdAt   DateTime  @default(now())
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  document    Document  @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  author      User      @relation("VersionAuthor", fields: [authorId], references: [id])
+
+  @@unique([documentId, version])
+  @@index([workspaceId])
+  @@index([documentId, createdAt])
+}
+
+model Message {
+  id          String    @id @default(cuid())
+  workspaceId String
+  senderId    String
+  body        String
+  channel     String    @default("general")
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  sender      User      @relation("MessageSender", fields: [senderId], references: [id])
+
+  @@index([workspaceId])
+  @@index([workspaceId, channel, createdAt])
+}
+
+model AuditLog {
+  id          String    @id @default(cuid())
+  workspaceId String
+  actorId     String?
+  action      String
+  entityType  String
+  entityId    String
+  metadata    Json?
+  createdAt   DateTime  @default(now())
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  actor       User?     @relation("AuditActor", fields: [actorId], references: [id])
+
+  @@index([workspaceId])
+  @@index([workspaceId, createdAt])
+  @@index([workspaceId, entityType, entityId])
+}
+
+model Comment {
+  id          String    @id @default(cuid())
+  workspaceId String
+  documentId  String
+  authorId    String
+  content     String
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  document    Document  @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  author      User      @relation("CommentAuthor", fields: [authorId], references: [id], onDelete: Cascade)
+
+  @@index([documentId, createdAt])
+  @@index([workspaceId])
+}
+
+model FileAsset {
+  id          String    @id @default(cuid())
+  workspaceId String
+  ownerId     String
+  name        String
+  mimeType    String    @default("text/plain")
+  size        Int       @default(0)
+  content     String    @default("")
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  owner       User      @relation("FileAssetOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+  @@index([workspaceId, updatedAt])
+}
+
+model File {
+  id          String        @id @default(cuid())
+  workspaceId String
+  ownerId     String
+  name        String
+  mimeType    String        @default("application/octet-stream")
+  size        Int           @default(0)
+  storagePath String
+  checksum    String?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  workspace   Workspace     @relation("WorkspaceFiles", fields: [workspaceId], references: [id], onDelete: Cascade)
+  owner       User          @relation("FileOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  versions    FileVersion[]
+
+  @@index([workspaceId])
+  @@index([workspaceId, updatedAt])
+}
+
+model FileVersion {
+  id          String    @id @default(cuid())
+  fileId      String
+  workspaceId String
+  uploadedById String
+  name        String
+  mimeType    String    @default("application/octet-stream")
+  size        Int       @default(0)
+  storagePath String
+  checksum    String?
+  createdAt   DateTime  @default(now())
+  file        File      @relation(fields: [fileId], references: [id], onDelete: Cascade)
+  workspace   Workspace @relation("WorkspaceFileVersions", fields: [workspaceId], references: [id], onDelete: Cascade)
+  uploadedBy  User      @relation("FileVersionUploader", fields: [uploadedById], references: [id], onDelete: Cascade)
+
+  @@index([fileId, createdAt])
+  @@index([workspaceId])
+}
+
+model Notification {
+  id          String    @id @default(cuid())
+  workspaceId String
+  recipientId String
+  actorId     String?
+  type        String
+  title       String
+  description String
+  entityType  String?
+  entityId    String?
+  metadata    Json?
+  read        Boolean   @default(false)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  workspace   Workspace @relation("WorkspaceNotifications", fields: [workspaceId], references: [id], onDelete: Cascade)
+  recipient   User      @relation("NotificationRecipient", fields: [recipientId], references: [id], onDelete: Cascade)
+  actor       User?     @relation("NotificationActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId, recipientId, read, createdAt])
+  @@index([recipientId, read])
+}
